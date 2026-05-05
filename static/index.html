@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Voice Agent</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: sans-serif;
+        background: #f0f2f5;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-height: 100vh;
+        padding: 30px 20px;
+      }
+
+      h1 {
+        font-size: 22px;
+        color: #111;
+        margin-bottom: 6px;
+      }
+
+      .subtitle {
+        font-size: 13px;
+        color: #888;
+        margin-bottom: 28px;
+      }
+
+      #btn {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        border: none;
+        background: #4f46e5;
+        color: white;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition:
+          background 0.2s,
+          transform 0.1s;
+        user-select: none;
+        -webkit-user-select: none;
+        touch-action: none;
+      }
+
+      #btn:active {
+        transform: scale(0.96);
+      }
+      #btn.recording {
+        background: #dc2626;
+      }
+      #btn.processing {
+        background: #6b7280;
+        cursor: not-allowed;
+      }
+
+      #status {
+        margin: 16px 0 20px;
+        color: #666;
+        font-size: 13px;
+        height: 18px;
+      }
+
+      #chat {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        max-width: 460px;
+        max-height: 360px;
+        overflow-y: auto;
+        gap: 8px;
+        padding: 4px 0;
+      }
+
+      .bubble {
+        padding: 10px 14px;
+        border-radius: 14px;
+        font-size: 14px;
+        line-height: 1.5;
+        max-width: 85%;
+        word-wrap: break-word;
+      }
+
+      .user-bubble {
+        background: #4f46e5;
+        color: white;
+        align-self: flex-end;
+        border-bottom-right-radius: 4px;
+      }
+
+      .agent-bubble {
+        background: white;
+        color: #111;
+        align-self: flex-start;
+        border-bottom-left-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      }
+
+      .label {
+        font-size: 11px;
+        font-weight: 600;
+        margin-bottom: 2px;
+        opacity: 0.7;
+      }
+
+      .user-bubble .label {
+        text-align: right;
+      }
+
+      #controls {
+        display: flex;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      #reset {
+        background: none;
+        border: 1px solid #ddd;
+        padding: 7px 16px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 13px;
+        color: #666;
+        transition: border-color 0.2s;
+      }
+
+      #reset:hover {
+        border-color: #aaa;
+      }
+
+      .thinking {
+        display: flex;
+        gap: 4px;
+        padding: 12px 16px;
+        background: white;
+        border-radius: 14px;
+        border-bottom-left-radius: 4px;
+        align-self: flex-start;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      }
+
+      .thinking span {
+        width: 7px;
+        height: 7px;
+        background: #aaa;
+        border-radius: 50%;
+        animation: bounce 1.2s infinite;
+      }
+
+      .thinking span:nth-child(2) {
+        animation-delay: 0.2s;
+      }
+      .thinking span:nth-child(3) {
+        animation-delay: 0.4s;
+      }
+
+      @keyframes bounce {
+        0%,
+        60%,
+        100% {
+          transform: translateY(0);
+        }
+        30% {
+          transform: translateY(-6px);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>AI Voice Agent</h1>
+    <p class="subtitle">Powered by Groq · Hold button to speak</p>
+
+    <button
+      id="btn"
+      ontouchstart="startRec(event)"
+      ontouchend="stopRec()"
+      onmousedown="startRec(event)"
+      onmouseup="stopRec()"
+    >
+      Hold to talk
+    </button>
+
+    <p id="status">Ready</p>
+
+    <div id="chat"></div>
+
+    <div id="controls">
+      <button id="reset" onclick="resetChat()">Clear chat</button>
+    </div>
+
+    <script>
+      let mediaRecorder = null;
+      let chunks = [];
+      let stream = null;
+      let recStart = 0;
+      let isProcessing = false;
+
+      const btn = document.getElementById("btn");
+      const status = document.getElementById("status");
+      const chat = document.getElementById("chat");
+      const synth = window.speechSynthesis;
+
+      async function startRec(e) {
+        e.preventDefault();
+        if (isProcessing) return;
+
+        chunks = [];
+        recStart = Date.now();
+
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (err) {
+          status.textContent = "Mic access denied. Please allow microphone.";
+          return;
+        }
+
+        mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+        mediaRecorder.start(100);
+
+        btn.classList.add("recording");
+        btn.textContent = "Listening...";
+        status.textContent = "Recording — release to send";
+      }
+
+      async function stopRec() {
+        if (!mediaRecorder || mediaRecorder.state === "inactive") return;
+
+        const duration = Date.now() - recStart;
+
+        mediaRecorder.stop();
+        stream.getTracks().forEach((t) => t.stop());
+        btn.classList.remove("recording");
+        btn.textContent = "Hold to talk";
+
+        if (duration < 500) {
+          status.textContent = "Too short — hold for at least 1 second";
+          setTimeout(() => (status.textContent = "Ready"), 2000);
+          return;
+        }
+
+        isProcessing = true;
+        btn.classList.add("processing");
+        btn.textContent = "Processing...";
+        status.textContent = "Sending to agent...";
+
+        const thinkingEl = addThinking();
+
+        mediaRecorder.onstop = async () => {
+          const blob = new Blob(chunks, { type: "audio/webm" });
+          const form = new FormData();
+          form.append("audio", blob, "audio.webm");
+
+          try {
+            const res = await fetch("/talk", { method: "POST", body: form });
+
+            if (!res.ok) {
+              throw new Error("Server error: " + res.status);
+            }
+
+            const data = await res.json();
+
+            removeThinking(thinkingEl);
+
+            if (data.transcript) {
+              addBubble(data.transcript, "user");
+            }
+            if (data.reply) {
+              addBubble(data.reply, "agent");
+              speak(data.reply);
+            } else if (!data.transcript) {
+              status.textContent = "Could not hear anything — try again";
+              setTimeout(() => (status.textContent = "Ready"), 2000);
+            }
+          } catch (err) {
+            removeThinking(thinkingEl);
+            status.textContent = "Error: " + err.message;
+            setTimeout(() => (status.textContent = "Ready"), 3000);
+          }
+
+          isProcessing = false;
+          btn.classList.remove("processing");
+          btn.textContent = "Hold to talk";
+          status.textContent = "Ready";
+        };
+      }
+
+      function addBubble(text, who) {
+        const wrapper = document.createElement("div");
+        wrapper.style.display = "flex";
+        wrapper.style.flexDirection = "column";
+        wrapper.style.alignItems = who === "user" ? "flex-end" : "flex-start";
+
+        const label = document.createElement("div");
+        label.className = "label";
+        label.style.color = "#999";
+        label.style.fontSize = "11px";
+        label.style.marginBottom = "2px";
+        label.style.paddingLeft = who === "user" ? "0" : "4px";
+        label.style.paddingRight = who === "user" ? "4px" : "0";
+        label.textContent = who === "user" ? "You" : "Agent";
+
+        const bubble = document.createElement("div");
+        bubble.className =
+          "bubble " + (who === "user" ? "user-bubble" : "agent-bubble");
+        bubble.textContent = text;
+
+        wrapper.appendChild(label);
+        wrapper.appendChild(bubble);
+        chat.appendChild(wrapper);
+        chat.scrollTop = chat.scrollHeight;
+      }
+
+      function addThinking() {
+        const el = document.createElement("div");
+        el.className = "thinking";
+        el.innerHTML = "<span></span><span></span><span></span>";
+        chat.appendChild(el);
+        chat.scrollTop = chat.scrollHeight;
+        return el;
+      }
+
+      function removeThinking(el) {
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+      }
+
+      function speak(text) {
+        synth.cancel();
+        const utt = new SpeechSynthesisUtterance(text);
+        utt.rate = 1.0;
+        utt.pitch = 1.0;
+        utt.volume = 1.0;
+        synth.speak(utt);
+      }
+
+      async function resetChat() {
+        chat.innerHTML = "";
+        synth.cancel();
+        try {
+          await fetch("/reset", { method: "DELETE" });
+        } catch (e) {}
+        status.textContent = "Chat cleared";
+        setTimeout(() => (status.textContent = "Ready"), 1500);
+      }
+    </script>
+  </body>
+</html>
